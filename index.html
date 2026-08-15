@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Virtual Call Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; background: #f0f2f5; margin-top: 50px; }
+        video { width: 40%; max-width: 400px; border: 2px solid #ccc; border-radius: 8px; margin: 10px; background: #000; }
+        .box { margin: 20px; }
+        input, button { padding: 10px; font-size: 16px; margin: 5px; }
+    </style>
+</head>
+<body>
+
+    <h2>Virtual Video Call App</h2>
+    
+    <div class="box">
+        <h3 id="my-id">My ID: Connecting...</h3>
+    </div>
+
+    <div class="box">
+        <input type="text" id="target-id" placeholder="Enter Friend's ID">
+        <button id="call-btn">Call</button>
+    </div>
+
+    <div>
+        <video id="local-video" autoplay muted></video>
+        <video id="video-chat-out" autoplay></video>
+    </div>
+
+    <!-- Socket.io client library -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script>
+        const SOCKET_URL = 'https://virtual-call-server.onrender.com';
+        const socket = io(SOCKET_URL);
+
+        let localStream;
+        let peerConnection;
+        let remoteId;
+
+        const servers = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' }
+            ]
+        };
+
+        async function startCamera() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                document.getElementById('local-video').srcObject = localStream;
+            } catch (error) {
+                console.error('Camera access denied:', error);
+            }
+        }
+        startCamera();
+
+        socket.on('connect', () => {
+            document.getElementById('my-id').innerText = `My ID: ${socket.id}`;
+        });
+
+        document.getElementById('call-btn').addEventListener('click', async () => {
+            remoteId = document.getElementById('target-id').value;
+            if (!remoteId) return alert('Please enter target ID');
+
+            createPeerConnection();
+
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+
+            socket.on('call-accepted', async (signal) => {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+            });
+
+            socket.on('incoming-call', async (data) => {
+                remoteId = data.from;
+                createPeerConnection();
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                socket.emit('accept-call', { to: remoteId, signal: answer });
+            });
+        });
+
+        function createPeerConnection() {
+            peerConnection = new RTCPeerConnection(servers);
+
+            localStream.getTracks().forEach(track => {
+                peerConnection.addTrack(track, localStream);
+            });
+
+            peerConnection.ontrack = (event) => {
+                document.getElementById('video-chat-out').srcObject = event.streams[0];
+            };
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate && remoteId) {
+                    socket.emit('call-user', { to: remoteId, signal: peerConnection.localDescription });
+                }
+            };
+        }
+    </script>
+</body>
+</html>
